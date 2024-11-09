@@ -1,75 +1,28 @@
 import argparse
 import requests
 from urllib.parse import quote_plus
-from json import dumps, decoder
+from json import decoder, dumps
+from colorama import init, Fore, Style
 import random
 import time
 
-import phonenumbers
-from phonenumbers.phonenumberutil import region_code_for_country_code
-import pycountry
+# Initialize colorama
+init(autoreset=True)
 
 def getUserId(username, sessionid):
     headers = {"User-Agent": "iphone_ua", "x-ig-app-id": "936619743392459"}
-    api = requests.get(
+    response = requests.get(
         f'https://i.instagram.com/api/v1/users/web_profile_info/?username={username}',
         headers=headers,
         cookies={'sessionid': sessionid}
     )
     try:
-        if api.status_code == 404:
+        if response.status_code == 404:
             return {"id": None, "error": "User not found"}
-        user_id = api.json()["data"]['user']['id']
+        user_id = response.json()["data"]["user"]["id"]
         return {"id": user_id, "error": None}
     except decoder.JSONDecodeError:
         return {"id": None, "error": "Rate limit"}
-
-def get_csrf_token(sessionid):
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Mobile Safari/537.36",
-        "Referer": "https://www.instagram.com/"
-    }
-    cookies = {"sessionid": sessionid}
-    try:
-        response = requests.get("https://www.instagram.com/", headers=headers, cookies=cookies, timeout=10)
-        response.raise_for_status()
-    except requests.exceptions.RequestException as e:
-        return f"Erreur lors de la requête initiale : {str(e)}", None
-    response_cookies = response.cookies
-    csrftoken = response_cookies.get("csrftoken")
-    if csrftoken:
-        return csrftoken, response_cookies
-    else:
-        return "CSRF token introuvable", response_cookies
-
-def simulate_navigation(sessionid):
-    """
-    Simuler la navigation sur plusieurs pages d'Instagram pour récupérer plus de cookies.
-    """
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Mobile Safari/537.36",
-        "Referer": "https://www.instagram.com/"
-    }
-    cookies = {"sessionid": sessionid}
-    pages_to_visit = [
-        "https://www.instagram.com/",
-        "https://www.instagram.com/explore/",
-        "https://www.instagram.com/accounts/edit/",
-        "https://www.instagram.com/direct/inbox/"
-    ]
-    csrftoken = None
-    for page in pages_to_visit:
-        try:
-            response = requests.get(page, headers=headers, cookies=cookies, timeout=10)
-            response.raise_for_status()
-        except requests.exceptions.RequestException as e:
-            print(f"Erreur lors de la navigation : {str(e)}")
-            continue
-        cookies.update(response.cookies.get_dict())
-        if not csrftoken:
-            csrftoken = response.cookies.get("csrftoken")
-        time.sleep(random.uniform(1, 3))  # Pause aléatoire entre les requêtes pour simuler une navigation humaine
-    return cookies, csrftoken
 
 def getInfo(username, sessionid):
     userId = getUserId(username, sessionid)
@@ -80,10 +33,37 @@ def getInfo(username, sessionid):
         f'https://i.instagram.com/api/v1/users/{userId["id"]}/info/',
         headers={'User-Agent': 'Instagram 64.0.0.14.96'},
         cookies={'sessionid': sessionid}
-    ).json()["user"]
-    infoUser = response
-    infoUser["userID"] = userId["id"]
-    return {"user": infoUser, "error": None}
+    )
+    try:
+        infoUser = response.json()["user"]
+        infoUser["userID"] = userId["id"]
+        
+        # Afficher le JSON complet
+        print(Fore.MAGENTA + Style.BRIGHT + "\nDonnées JSON complètes :")
+        print_recursive(infoUser)
+        
+        return {"user": infoUser, "error": None}
+    except decoder.JSONDecodeError:
+        print(Fore.RED + Style.BRIGHT + "Erreur de décodage JSON.")
+        print(Fore.WHITE + Style.BRIGHT + response.text)
+        return {"user": None, "error": "Erreur de décodage JSON"}
+
+def print_recursive(data, level=0):
+    """
+    Fonction récursive pour afficher toutes les informations dans le JSON.
+    """
+    indent = ' ' * (4 * level)
+    if isinstance(data, dict):
+        for key, value in data.items():
+            print(Fore.YELLOW + f"{indent}{key}: ", end="")
+            if isinstance(value, (dict, list)):
+                print()
+                print_recursive(value, level + 1)
+            else:
+                print(Fore.GREEN + f"{value}")
+    elif isinstance(data, list):
+        for item in data:
+            print_recursive(item, level + 1)
 
 def advanced_lookup(username, sessionid, recovery_method):
     """
@@ -140,10 +120,36 @@ def advanced_lookup(username, sessionid, recovery_method):
     else:
         return f"Erreur lors de la requête : {response.status_code}"
 
+def simulate_navigation(sessionid):
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Mobile Safari/537.36",
+        "Referer": "https://www.instagram.com/"
+    }
+    cookies = {"sessionid": sessionid}
+    pages_to_visit = [
+        "https://www.instagram.com/",
+        "https://www.instagram.com/explore/",
+        "https://www.instagram.com/accounts/edit/",
+        "https://www.instagram.com/direct/inbox/"
+    ]
+    csrftoken = None
+    for page in pages_to_visit:
+        try:
+            response = requests.get(page, headers=headers, cookies=cookies, timeout=10)
+            response.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            print(f"Erreur lors de la navigation : {str(e)}")
+            continue
+        cookies.update(response.cookies.get_dict())
+        if not csrftoken:
+            csrftoken = response.cookies.get("csrftoken")
+        time.sleep(random.uniform(1, 3))  # Pause aléatoire entre les requêtes pour simuler une navigation humaine
+    return cookies, csrftoken
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-s', '--sessionid', help="Instagram session ID", required=True)
-    parser.add_argument('-u', '--username', help="One username", required=True)
+    parser.add_argument('-u', '--username', help="Nom d'utilisateur Instagram", required=True)
     parser.add_argument('-r', '--recovery_method', help="Méthode de récupération (email, sms, wa)", default="email")
     args = parser.parse_args()
 
@@ -154,37 +160,15 @@ def main():
     if not infos["user"]:
         exit(infos["error"])
 
-    infos = infos["user"]
-    print("Informations about     : " + infos["username"])
-    print("userID                 : " + infos["userID"])
-    print("Full Name              : " + infos["full_name"])
-    print("Verified               : " + str(infos['is_verified']) + " | Is business Account : " + str(infos["is_business"]))
-    print("Is private Account     : " + str(infos["is_private"]))
-    print("Follower               : " + str(infos["follower_count"]) + " | Following : " + str(infos["following_count"]))
-    print("Number of posts        : " + str(infos["media_count"]))
-    if infos["external_url"]:
-        print("External url           : " + infos["external_url"])
-    print("IGTV posts             : " + str(infos["total_igtv_videos"]))
-    print("Biography              : " + (f"""\n{" "*25}""").join(infos["biography"].split("\n")))
-    print("Linked WhatsApp        : " + str(infos["is_whatsapp_linked"]))
-    print("Memorial Account       : " + str(infos["is_memorialized"]))
-    print("New Instagram user     : " + str(infos["is_new_to_instagram"]))
-    if "public_email" in infos.keys():
-        if infos["public_email"]:
-            print("Public Email           : " + infos["public_email"])
-    if "public_phone_number" in infos.keys():
-        if str(infos["public_phone_number"]):
-            phonenr = "+" + str(infos["public_phone_country_code"]) + " " + str(infos["public_phone_number"])
-            try:
-                pn = phonenumbers.parse(phonenr)
-                countrycode = region_code_for_country_code(pn.country_code)
-                country = pycountry.countries.get(alpha_2=countrycode)
-                phonenr = phonenr + " ({}) ".format(country.name)
-            except:
-                pass
-            print("Public Phone number    : " + phonenr)
+    # Affichage des informations JSON complètes de l'utilisateur
+    print("\n===== Informations complètes de l'utilisateur =====")
+    print_recursive(infos["user"])
+
+    # Récupération des informations de récupération (obfuscated)
     other_infos = advanced_lookup(username, sessionid, args.recovery_method)
+    print(Fore.CYAN + Style.BRIGHT + "\nInformations de récupération (obfusquées) :")
     print(other_infos)
 
 if __name__ == "__main__":
     main()
+
