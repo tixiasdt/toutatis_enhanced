@@ -6,10 +6,10 @@ from colorama import init, Fore, Style
 import random
 import time
 
-# Initialize colorama
+# Initialisation de Colorama pour le formatage des couleurs dans la console
 init(autoreset=True)
 
-def getUserId(username, sessionid):
+def get_user_id(username, sessionid):
     headers = {"User-Agent": "iphone_ua", "x-ig-app-id": "936619743392459"}
     response = requests.get(
         f'https://i.instagram.com/api/v1/users/web_profile_info/?username={username}',
@@ -18,40 +18,36 @@ def getUserId(username, sessionid):
     )
     try:
         if response.status_code == 404:
-            return {"id": None, "error": "User not found"}
+            return {"id": None, "error": "Utilisateur non trouvé"}
         user_id = response.json()["data"]["user"]["id"]
         return {"id": user_id, "error": None}
     except decoder.JSONDecodeError:
-        return {"id": None, "error": "Rate limit"}
+        return {"id": None, "error": "Limite de requêtes atteinte"}
 
-def getInfo(username, sessionid):
-    userId = getUserId(username, sessionid)
-    if userId["error"]:
-        return userId
+def get_info(username, sessionid):
+    user_id_info = get_user_id(username, sessionid)
+    if user_id_info["error"]:
+        return user_id_info
 
     response = requests.get(
-        f'https://i.instagram.com/api/v1/users/{userId["id"]}/info/',
+        f'https://i.instagram.com/api/v1/users/{user_id_info["id"]}/info/',
         headers={'User-Agent': 'Instagram 64.0.0.14.96'},
         cookies={'sessionid': sessionid}
     )
     try:
-        infoUser = response.json()["user"]
-        infoUser["userID"] = userId["id"]
+        user_info = response.json()["user"]
+        user_info["userID"] = user_id_info["id"]
         
-        # Afficher le JSON complet
-        print(Fore.MAGENTA + Style.BRIGHT + "\nDonnées JSON complètes :")
-        print_recursive(infoUser)
+        print(Fore.CYAN + Style.BRIGHT + "\n===== Informations complètes de l'utilisateur =====" + Style.RESET_ALL)
+        print_recursive(user_info)
         
-        return {"user": infoUser, "error": None}
+        return {"user": user_info, "error": None}
     except decoder.JSONDecodeError:
         print(Fore.RED + Style.BRIGHT + "Erreur de décodage JSON.")
         print(Fore.WHITE + Style.BRIGHT + response.text)
         return {"user": None, "error": "Erreur de décodage JSON"}
 
 def print_recursive(data, level=0):
-    """
-    Fonction récursive pour afficher toutes les informations dans le JSON.
-    """
     indent = ' ' * (4 * level)
     if isinstance(data, dict):
         for key, value in data.items():
@@ -65,27 +61,55 @@ def print_recursive(data, level=0):
         for item in data:
             print_recursive(item, level + 1)
 
+def get_csrf_token(sessionid):
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Mobile Safari/537.36",
+        "Referer": "https://www.instagram.com/"
+    }
+    cookies = {"sessionid": sessionid}
+    response = requests.get("https://www.instagram.com/", headers=headers, cookies=cookies)
+    if response.status_code == 200:
+        return response.cookies.get("csrftoken", "CSRF token introuvable")
+    else:
+        return f"Erreur lors de la requête initiale : {response.status_code}"
+
+def get_password_reset_hint(username, sessionid):
+    csrftoken = get_csrf_token(sessionid)
+    if "Erreur" in csrftoken or csrftoken == "CSRF token introuvable":
+        return csrftoken
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Mobile Safari/537.36",
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "X-CSRFToken": csrftoken
+    }
+    cookies = {"sessionid": sessionid, "csrftoken": csrftoken}
+    data = {
+        "email_or_username": username,
+        "queryParams": "{}"
+    }
+    response = requests.post(
+        "https://www.instagram.com/accounts/account_recovery_send_ajax/",
+        headers=headers,
+        cookies=cookies,
+        data=data
+    )
+    if response.status_code == 200:
+        try:
+            response_data = response.json()
+            return response_data.get("contact_point", "Aucune information de récupération trouvée.")
+        except ValueError:
+            return "Erreur de décodage JSON."
+    return f"Erreur lors de la requête : {response.status_code}"
+
 def advanced_lookup(username, sessionid, recovery_method):
-    """
-    Post request to get obfuscated login information (similar to how Toutatis does).
-    """
     cookies, csrftoken = simulate_navigation(sessionid)
     if not csrftoken:
-        return "Erreur : CSRF token introuvable après la navigation."
-    # Rotation des User-Agents
-    user_agents = [
-        "Instagram 150.0.0.33.120 Android (29/10; 320dpi; 720x1280; Samsung; SM-G973F; beyond1; exynos9820; en_US; 230767795)",
-        "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-        "Instagram 123.0.0.21.114 Android (30/10; 420dpi; 1080x1920; OnePlus; ONEPLUS A5010; OnePlus5T; qcom; en_US; 200322364)"
-    ]
+        return {"obfuscated_email": None, "obfuscated_phone": None, "error": "CSRF token introuvable après la navigation."}
+    
     headers = {
-        "User-Agent": random.choice(user_agents),
+        "User-Agent": "Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Mobile Safari/537.36",
         "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-        "X-IG-App-ID": "124024574287414",
-        "Accept-Encoding": "gzip, deflate",
-        "Host": "i.instagram.com",
-        "Connection": "keep-alive",
         "X-CSRFToken": csrftoken
     }
     cookies["csrftoken"] = csrftoken
@@ -103,22 +127,21 @@ def advanced_lookup(username, sessionid, recovery_method):
         )
         response.raise_for_status()
     except requests.exceptions.RequestException as e:
-        return f"Erreur lors de la requête : {str(e)}"
+        return {"obfuscated_email": f"Erreur lors de la requête : {str(e)}", "obfuscated_phone": None}
+
     if response.status_code == 200:
         try:
             response_data = response.json()
-            hint = ""
-            if "obfuscated_email" in response_data:
-                hint += f"Obfuscated Email: {response_data['obfuscated_email']}\n"
-            if "obfuscated_phone" in response_data:
-                hint += f"Obfuscated Phone: {response_data['obfuscated_phone']}\n"
-            return hint if hint else "Aucune information de récupération trouvée."
+            obfuscated_email = response_data.get("obfuscated_email")
+            obfuscated_phone = response_data.get("obfuscated_phone")
+            # On ignore l'affichage si l'email obfusqué est simplement "*@gmail.com"
+            if obfuscated_email == "*@gmail.com":
+                obfuscated_email = None
+            return {"obfuscated_email": obfuscated_email, "obfuscated_phone": obfuscated_phone}
         except ValueError:
-            return "Erreur de décodage JSON."
-    elif response.status_code == 400 and "useragent mismatch" in response.text:
-        return "Erreur : Le User-Agent ne correspond pas. Essayez un autre User-Agent."
-    else:
-        return f"Erreur lors de la requête : {response.status_code}"
+            return {"obfuscated_email": "Erreur de décodage JSON.", "obfuscated_phone": None}
+
+    return {"obfuscated_email": f"Erreur lors de la requête : {response.status_code}", "obfuscated_phone": None}
 
 def simulate_navigation(sessionid):
     headers = {
@@ -136,14 +159,13 @@ def simulate_navigation(sessionid):
     for page in pages_to_visit:
         try:
             response = requests.get(page, headers=headers, cookies=cookies, timeout=10)
-            response.raise_for_status()
+            cookies.update(response.cookies.get_dict())
+            if not csrftoken:
+                csrftoken = response.cookies.get("csrftoken")
+            time.sleep(random.uniform(1, 3))
         except requests.exceptions.RequestException as e:
             print(f"Erreur lors de la navigation : {str(e)}")
             continue
-        cookies.update(response.cookies.get_dict())
-        if not csrftoken:
-            csrftoken = response.cookies.get("csrftoken")
-        time.sleep(random.uniform(1, 3))  # Pause aléatoire entre les requêtes pour simuler une navigation humaine
     return cookies, csrftoken
 
 def main():
@@ -156,19 +178,35 @@ def main():
     sessionid = args.sessionid
     username = args.username
 
-    infos = getInfo(username, sessionid)
-    if not infos["user"]:
-        exit(infos["error"])
+      
 
-    # Affichage des informations JSON complètes de l'utilisateur
-    print("\n===== Informations complètes de l'utilisateur =====")
-    print_recursive(infos["user"])
+    # Récupération des informations utilisateur
+    infos = get_info(username, sessionid)
+    if infos.get("user"):
+        print_recursive(infos["user"])
+    else:
+        print(Fore.RED + "Aucune information utilisateur trouvée.")
 
-    # Récupération des informations de récupération (obfuscated)
-    other_infos = advanced_lookup(username, sessionid, args.recovery_method)
-    print(Fore.CYAN + Style.BRIGHT + "\nInformations de récupération (obfusquées) :")
-    print(other_infos)
+    # Toujours afficher le titre de la section
+
+    # Ligne de séparation esthétique avant l'affichage des emails et téléphones obfusqués
+    print(Fore.CYAN + Style.BRIGHT + "\n===== Informations complètes de l'utilisateur =====\n" + Style.RESET_ALL)
+
+
+    # Récupération de l'email obfusqué
+    email_hint = get_password_reset_hint(username, sessionid)
+    if email_hint and email_hint != "*@gmail.com":
+        print(Fore.CYAN + Style.BRIGHT + "Obfuscated Email: " + Style.RESET_ALL + email_hint)
+
+    # Récupération du téléphone obfusqué avec Toutatis
+    phone_hint = advanced_lookup(username, sessionid, args.recovery_method)
+    if phone_hint["obfuscated_email"]:
+        print(Fore.CYAN + Style.BRIGHT + "Obfuscated Email: " + Style.RESET_ALL + phone_hint["obfuscated_email"])
+    if phone_hint["obfuscated_phone"]:
+        print(Fore.CYAN + Style.BRIGHT + "Obfuscated Phone: " + Style.RESET_ALL + phone_hint["obfuscated_phone"])
+
+    # Ligne de séparation finale pour un design plus propre
+    print(Fore.CYAN + Style.BRIGHT + "\n--------------------------------------------------------\n" + Style.RESET_ALL)
 
 if __name__ == "__main__":
     main()
-
